@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date
-import urllib.parse
 
 # Set Page Config
 st.set_page_config(page_title="Staff Manager", layout="centered")
@@ -16,9 +15,9 @@ if 'emp_data' not in st.session_state:
 if 'attendance' not in st.session_state:
     st.session_state.attendance = pd.DataFrame(columns=["Date", "Name", "Status"])
 
-st.title("📌 Staff Attendance & Payroll")
+# --- MAIN INTERFACE ---
+st.title("📌 Staff Attendance")
 
-# --- MARK ATTENDANCE ---
 with st.container(border=True):
     selected_date = st.date_input("1. Select Date", date.today())
     date_str = selected_date.strftime("%Y-%m-%d")
@@ -41,59 +40,81 @@ with st.container(border=True):
 st.divider()
 
 # --- REPORTS SECTION ---
-st.header("📊 Reports & Sharing")
-rep_tab1, rep_tab2, rep_tab3 = st.tabs(["💰 Monthly Summary", "📅 Monthly Log", "👤 Send Employee Report"])
+st.header("📊 Reports & Shareable Salary Slips")
 
-# Global Month/Year for consistency
-sum_month = st.sidebar.selectbox("Current View Month", ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"], index=date.today().month - 1)
-sum_year = st.sidebar.selectbox("Current View Year", [2025, 2026], index=1)
-m_num = datetime.strptime(sum_month, "%B").month
+rep_tab1, rep_tab2, rep_tab3, rep_tab4 = st.tabs(["💰 Monthly Summary", "📅 Monthly Log", "👤 History", "📩 Send Report"])
 
-# Calculation Logic Helper
-def get_emp_report(name, m, y):
-    base = st.session_state.emp_data[st.session_state.emp_data["Name"] == name]["Base_Salary"].values[0]
+# Global Month/Year Picker for Reports
+c1, c2 = st.columns(2)
+with c1:
+    m_name = st.selectbox("Select Month", ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"], index=date.today().month - 1)
+with c2:
+    y_val = st.selectbox("Select Year", [2025, 2026], index=1)
+m_num = datetime.strptime(m_name, "%B").month
+
+def get_stats(emp_row, m, y):
     df = st.session_state.attendance.copy()
-    if df.empty:
-        return 0, 1000, 0, base + 1000, []
+    if df.empty: return 0.0, 1000, 0, emp_row["Base_Salary"] + 1000, []
     
     df['Date'] = pd.to_datetime(df['Date'])
-    month_data = df[(df['Date'].dt.month == m) & (df['Date'].dt.year == y) & (df['Name'] == name)]
+    month_data = df[(df['Date'].dt.month == m) & (df['Date'].dt.year == y) & (df['Name'] == emp_row['Name'])]
     
-    leaves_dates = month_data[month_data["Status"] == "Leave"]["Date"].dt.strftime('%d-%m').tolist()
-    halfs_dates = month_data[month_data["Status"] == "Half-Day"]["Date"].dt.strftime('%d-%m').tolist()
+    l_dates = month_data[month_data["Status"] == "Leave"]["Date"].dt.strftime('%d-%m').tolist()
+    h_dates = month_data[month_data["Status"] == "Half-Day"]["Date"].dt.strftime('%d-%m').tolist()
     
-    total_l = len(leaves_dates) + (len(halfs_dates) * 0.5)
+    total_l = (len(l_dates) * 1.0) + (len(h_dates) * 0.5)
     bonus = 1000 if total_l == 0 else 0
     unpaid = max(0.0, total_l - 1.0)
-    deduction = round(unpaid * (base / 26))
-    final = round(base + bonus - deduction)
+    deduction = round(unpaid * (emp_row["Base_Salary"] / 26))
+    final = round(emp_row["Base_Salary"] + bonus - deduction)
     
-    return total_l, bonus, deduction, final, {"Leaves": leaves_dates, "Half-Days": halfs_dates}
+    return total_l, bonus, deduction, final, {"leaves": l_dates, "halfs": h_dates}
 
 with rep_tab1:
     summary = st.session_state.emp_data.copy()
-    summary[["Leaves", "Bonus", "Deduction", "Final Pay"]] = summary.apply(lambda r: pd.Series(get_emp_report(r["Name"], m_num, sum_year)[:4]), axis=1)
+    res = summary.apply(lambda x: get_stats(x, m_num, y_val)[:4], axis=1)
+    summary[["Leaves", "Bonus", "Deduction", "Final Pay"]] = pd.DataFrame(res.tolist(), index=summary.index)
     st.dataframe(summary, use_container_width=True, hide_index=True)
 
+with rep_tab2:
+    df_log = st.session_state.attendance.copy()
+    if not df_log.empty:
+        df_log['Date'] = pd.to_datetime(df_log['Date'])
+        filtered = df_log[(df_log['Date'].dt.month == m_num) & (df_log['Date'].dt.year == y_val)]
+        st.table(filtered.sort_values(by="Date", ascending=False))
+
 with rep_tab3:
-    target = st.selectbox("Select Employee to Notify", st.session_state.emp_data["Name"])
-    l_count, bonus, ded, final, dates = get_emp_report(target, m_num, sum_year)
-    base_sal = st.session_state.emp_data[st.session_state.emp_data["Name"] == target]["Base_Salary"].values[0]
+    target = st.selectbox("Select Employee", st.session_state.emp_data["Name"])
+    st.table(st.session_state.attendance[st.session_state.attendance["Name"] == target])
 
-    # Generate Message Text
-    msg = f"Salary Report for {target} ({sum_month} {sum_year})\n\n"
-    msg += f"Base Salary: ₹{base_sal}\n"
-    msg += f"Total Leaves: {l_count}\n"
-    if dates["Leaves"]: msg += f"• Full Leaves: {', '.join(dates['Leaves'])}\n"
-    if dates["Half-Days"]: msg += f"• Half-Days: {', '.join(dates['Half-Days'])}\n"
+with rep_tab4:
+    st.subheader("Generate Salary Breakdown")
+    target_emp = st.selectbox("Pick Employee to Message", st.session_state.emp_data["Name"])
+    emp_row = st.session_state.emp_data[st.session_state.emp_data["Name"] == target_emp].iloc[0]
     
-    msg += f"\n--- Calculation ---\n"
-    msg += f"Bonus (0 leaves): +₹{bonus}\n"
-    msg += f"Deduction (after 1 paid leave): -₹{ded}\n"
-    msg += f"Final Payout: ₹{final}\n"
+    total_l, bonus, deduct, final, dates = get_stats(emp_row, m_num, y_val)
+    
+    report_text = f"""
+*Salary Slip: {m_name} {y_val}*
+------------------------------
+*Employee:* {target_emp}
+*Base Salary:* ₹{emp_row['Base_Salary']}
 
-    st.code(msg) # Shows the preview
+*Attendance Summary:*
+- Full Leaves: {", ".join(dates['leaves']) if dates['leaves'] else "None"}
+- Half Days: {", ".join(dates['halfs']) if dates['halfs'] else "None"}
+- Total Leave Count: {total_l} days
 
-    # WhatsApp Link
-    whatsapp_url = f"https://wa.me/?text={urllib.parse.quote(msg)}"
-    st.link_button("📲 Send via WhatsApp", whatsapp_url, use_container_width=True)
+*Calculation:*
+- Paid Leave Allowed: 1 day
+- Paid Bonus (0 leaves): ₹{bonus}
+- Deduction: ₹{deduct} (for {max(0.0, total_l-1)} unpaid days)
+
+*FINAL PAYOUT: ₹{final}*
+------------------------------
+    """
+    st.code(report_text, language="markdown")
+    st.info("Copy the text above and paste it in WhatsApp or Email to the employee.")
+
+with st.expander("⚙️ Settings"):
+    st.session_state.emp_data = st.data_editor(st.session_state.emp_data)
