@@ -26,12 +26,10 @@ with st.container(border=True):
     status_type = st.radio("3. Select Attendance Type", ["Present", "Half-Day", "Leave"], horizontal=True)
 
     if st.button("Submit Attendance", type="primary", use_container_width=True):
-        # Remove old entry for that date/employee
         st.session_state.attendance = st.session_state.attendance[
             ~((st.session_state.attendance["Date"] == date_str) & 
               (st.session_state.attendance["Name"] == emp_name))
         ]
-        
         if status_type != "Present":
             new_row = pd.DataFrame({"Date": [date_str], "Name": [emp_name], "Status": [status_type]})
             st.session_state.attendance = pd.concat([st.session_state.attendance, new_row], ignore_index=True)
@@ -45,35 +43,28 @@ st.divider()
 # --- REPORTS SECTION ---
 st.header("📊 Reports & History")
 
-# NEW: Month and Year Picker for Summary
-col1, col2 = st.columns(2)
-with col1:
-    view_month = st.selectbox("Select Month", ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"], index=date.today().month - 1)
-with col2:
-    view_year = st.selectbox("Select Year", [2024, 2025, 2026], index=2)
-
-month_num = datetime.strptime(view_month, "%B").month
-
-# Filter data for the selected Month/Year
-def filter_monthly_data(df, m, y):
-    if df.empty: return df
-    df_temp = df.copy()
-    df_temp['Date'] = pd.to_datetime(df_temp['Date'])
-    return df_temp[(df_temp['Date'].dt.month == m) & (df_temp['Date'].dt.year == y)]
-
-monthly_attendance = filter_monthly_data(st.session_state.attendance, month_num, view_year)
-
-# Tabs for Summary vs Detailed Log
-rep_tab1, rep_tab2 = st.tabs(["Monthly Salary Summary", "Detailed Leave Log"])
+# Tabs for different report views
+rep_tab1, rep_tab2, rep_tab3 = st.tabs(["💰 Monthly Summary", "📅 Monthly Log", "👤 Employee History"])
 
 with rep_tab1:
-    st.subheader(f"Salaries for {view_month} {view_year}")
+    st.subheader("Monthly Salary Calculation")
+    c1, c2 = st.columns(2)
+    with c1:
+        sum_month = st.selectbox("Month", ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"], index=date.today().month - 1, key="sum_m")
+    with c2:
+        sum_year = st.selectbox("Year", [2025, 2026, 2027], index=1, key="sum_y")
     
+    m_num = datetime.strptime(sum_month, "%B").month
+    
+    # Calculation Logic
     def calculate_payout(row):
-        # Only count leaves for the selected month
-        emp_att = monthly_attendance[monthly_attendance["Name"] == row["Name"]]
-        l_count = (emp_att["Status"] == "Leave").sum() * 1.0
-        h_count = (emp_att["Status"] == "Half-Day").sum() * 0.5
+        df = st.session_state.attendance.copy()
+        if df.empty: return pd.Series([0.0, 1000, 0, row["Base_Salary"] + 1000])
+        df['Date'] = pd.to_datetime(df['Date'])
+        month_data = df[(df['Date'].dt.month == m_num) & (df['Date'].dt.year == sum_year) & (df['Name'] == row['Name'])]
+        
+        l_count = (month_data["Status"] == "Leave").sum() * 1.0
+        h_count = (month_data["Status"] == "Half-Day").sum() * 0.5
         total_l = l_count + h_count
         
         bonus = 1000 if total_l == 0 else 0
@@ -88,16 +79,30 @@ with rep_tab1:
     st.dataframe(summary, use_container_width=True, hide_index=True)
 
 with rep_tab2:
-    st.subheader(f"Leave Log for {view_month}")
-    if not monthly_attendance.empty:
-        # Format date for display
-        display_log = monthly_attendance.copy()
-        display_log['Date'] = display_log['Date'].dt.strftime('%d-%m-%Y')
-        st.table(display_log.sort_values(by="Date", ascending=False))
-    else:
-        st.info("No leaves or half-days recorded for this month.")
+    st.subheader("Date-wise Log (Monthly)")
+    # Re-using month/year from tab 1
+    st.write(f"Showing all leaves for {sum_month} {sum_year}:")
+    df_log = st.session_state.attendance.copy()
+    if not df_log.empty:
+        df_log['Date'] = pd.to_datetime(df_log['Date'])
+        filtered_log = df_log[(df_log['Date'].dt.month == m_num) & (df_log['Date'].dt.year == sum_year)]
+        if not filtered_history.empty:
+            st.table(filtered_log.sort_values(by="Date", ascending=False))
+        else:
+            st.info("No records found for this month.")
 
-# Edit Base Salary Option
-with st.expander("⚙️ Edit Base Salaries"):
+with rep_tab3:
+    st.subheader("Individual Employee Record")
+    target_name = st.selectbox("Select Employee to View History", st.session_state.emp_data["Name"])
+    
+    personal_history = st.session_state.attendance[st.session_state.attendance["Name"] == target_name]
+    
+    if not personal_history.empty:
+        st.write(f"Total leaves/half-days found for **{target_name}**: {len(personal_history)}")
+        st.table(personal_history.sort_values(by="Date", ascending=False))
+    else:
+        st.info(f"No leave records found for {target_name}. They have been present every day!")
+
+# Settings
+with st.expander("⚙️ Settings: Edit Base Salaries"):
     st.session_state.emp_data = st.data_editor(st.session_state.emp_data, num_rows="fixed")
-    st.warning("Changing salary here updates the calculation for all months.")
