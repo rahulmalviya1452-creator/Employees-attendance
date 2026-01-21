@@ -59,15 +59,14 @@ with st.container(border=True):
     status_type = st.radio("3. Attendance Type", ["Present", "Half-Day", "Leave"], horizontal=True)
 
     if st.button("Submit Attendance", type="primary", use_container_width=True):
-        # Remove old entry
         new_df = attendance_df[~((attendance_df['Date'] == date_str) & (attendance_df['Name'] == emp_name))]
         
         if status_type != "Present":
             add_row = pd.DataFrame({"Date": [date_str], "Name": [emp_name], "Status": [status_type]})
             new_df = pd.concat([new_df, add_row], ignore_index=True)
-            msg_text = f"Saved: **{emp_name}** is on **{status_type}** for {date_str}"
+            msg_text = f"Saved: **{emp_name}** is marked as **{status_type}** for {date_str}"
         else:
-            msg_text = f"Saved: **{emp_name}** is **Present** for {date_str}"
+            msg_text = f"Saved: **{emp_name}** is marked as **Present** for {date_str}"
         
         save_data_to_github(new_df)
         st.success(msg_text)
@@ -80,7 +79,6 @@ st.divider()
 st.header("📊 Reports")
 rep_tabs = st.tabs(["💰 Summary", "📅 Log", "👤 History", "📩 Share Report"])
 
-# Global Month/Year Picker
 c1, c2 = st.columns(2)
 with c1:
     m_name = st.selectbox("Month", ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"], index=date.today().month - 1)
@@ -96,9 +94,15 @@ def get_stats(emp_row, m, y, current_df):
     l_dates = month_data[month_data["Status"] == "Leave"]["Date"].dt.strftime('%d-%m').tolist()
     h_dates = month_data[month_data["Status"] == "Half-Day"]["Date"].dt.strftime('%d-%m').tolist()
     total_l = (len(l_dates) * 1.0) + (len(h_dates) * 0.5)
+    
+    # 1000 bonus if 0 leaves taken
     bonus = 1000 if total_l == 0 else 0
+    # 1 paid leave allowed
     unpaid = max(0.0, total_l - 1.0)
-    deduct = round(unpaid * (emp_row["Base_Salary"] / 26))
+    # UPDATED CALCULATION: Salary divided by 30
+    daily_rate = emp_row["Base_Salary"] / 30
+    deduct = round(unpaid * daily_rate)
+    
     return total_l, bonus, deduct, round(emp_row["Base_Salary"] + bonus - deduct), {"leaves": l_dates, "halfs": h_dates}
 
 with rep_tabs[0]:
@@ -113,7 +117,7 @@ with rep_tabs[1]:
         df_log['Date'] = pd.to_datetime(df_log['Date'])
         filtered = df_log[(df_log['Date'].dt.month == m_num) & (df_log['Date'].dt.year == y_val)]
         st.table(filtered.sort_values(by="Date", ascending=False))
-    else: st.info("No logs.")
+    else: st.info("No records found.")
 
 with rep_tabs[2]:
     target = st.selectbox("Select Employee", st.session_state.emp_data["Name"])
@@ -128,19 +132,23 @@ with rep_tabs[3]:
     wa_msg = urllib.parse.quote(msg)
     st.markdown(f'<a href="https://wa.me/?text={wa_msg}" target="_blank"><button style="background-color:#25D366;color:white;border:none;padding:10px;border-radius:5px;width:100%;">Share via WhatsApp</button></a>', unsafe_allow_html=True)
 
-# --- 3. SETTINGS & CLEAR DATA ---
+# --- 3. SETTINGS & DATA MANAGEMENT ---
 with st.expander("⚙️ Settings & Data Management"):
     st.subheader("Edit Base Salaries")
     st.session_state.emp_data = st.data_editor(st.session_state.emp_data)
     
     st.divider()
+    st.subheader("📦 Data Backup")
+    csv_data = attendance_df.to_csv(index=False).encode('utf-8')
+    st.download_button("Download Current CSV Backup", data=csv_data, file_name=f"attendance_backup_{date.today()}.csv", mime="text/csv")
+
+    st.divider()
     st.subheader("🗑️ Delete Records")
-    
     col_del1, col_del2 = st.columns(2)
     with col_del1:
-        date_to_del = st.date_input("Select Date to Delete", date.today())
+        date_to_del = st.date_input("Date to Delete", date.today())
     with col_del2:
-        name_to_del = st.selectbox("Select Name to Delete", st.session_state.emp_data["Name"], key="del_name")
+        name_to_del = st.selectbox("Name to Delete", st.session_state.emp_data["Name"], key="del_name")
     
     if st.button("Delete Specific Entry"):
         d_str = date_to_del.strftime("%Y-%m-%d")
@@ -152,5 +160,5 @@ with st.expander("⚙️ Settings & Data Management"):
     if st.button("🔥 CLEAR ALL DATA PERMANENTLY", type="secondary"):
         empty_df = pd.DataFrame(columns=["Date", "Name", "Status"])
         save_data_to_github(empty_df)
-        st.error("All attendance data has been wiped!")
+        st.error("All data wiped!")
         st.rerun()
